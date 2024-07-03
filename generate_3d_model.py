@@ -46,6 +46,6 @@ def generate_3d_model(contours_dir, output_file):
     plt.show()
 
 if __name__ == "__main__":
-    contours_dir = '/home/bazzi/TEVG/FSG/contours'
-    output_file = '/home/bazzi/TEVG/FSG/3d_model.png'
+    contours_dir = '/home/bazzi/TEVG/FSG/IVUS-processing/contours'
+    output_file = '/home/bazzi/TEVG/FSG/IVUS-processing/3d_model.png'
     generate_3d_model(contours_dir, output_file)

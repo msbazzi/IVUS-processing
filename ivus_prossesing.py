@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev
 import os
+import xml.etree.ElementTree as ET
 
 # Global variables for masks
 outer_mask = None
@@ -53,18 +54,58 @@ def draw_spline_contours(frame):
     else:
         return np.array(points)
 
+z_position =0
+def save_contour_as_ctgr(contours, file_path, number_of_frames):
+    contour_group = ET.Element("contourgroup", path_name="cyl", path_id="2", reslice_size="5", point_2D_display_size="", point_size="", version="1.0")
+    timestep = ET.SubElement(contour_group, "timestep", id="0")
+    lofting_params = ET.SubElement(timestep, "lofting_parameters", method="nurbs", sampling="60", sample_per_seg="12", use_linear_sample="1", linear_multiplier="10", use_fft="0", num_modes="20", u_degree="2", v_degree="2", u_knot_type="derivative", v_knot_type="average", u_parametric_type="centripetal", v_parametric_type="chord")
+
+    for idx, (contour, frame_idx) in enumerate(contours):
+        contour_elem = ET.SubElement(timestep, "contour", id=str(idx), type="SplinePolygon", method="Manual", closed="true", min_control_number="4", max_control_number="200", subdivision_type="2", subdivision_number="36", subdivision_spacing="0.097569441795349")
+        path_point = ET.SubElement(contour_elem, "path_point", id=str(idx*50))
+        ET.SubElement(path_point, "pos", x="0", y="0", z=str(frame_idx * 0.5))
+        ET.SubElement(path_point, "tangent", x="0", y="0", z="1")
+        ET.SubElement(path_point, "rotation", x="0", y="1", z="-0")
+        control_points_elem = ET.SubElement(contour_elem, "control_points")
+        contour_points_elem = ET.SubElement(contour_elem, "contour_points")
+
+        for i, point in enumerate(contour):
+            if isinstance(point, np.ndarray) and point.size == 2:
+                x, y = point[0], point[1]
+                ET.SubElement(control_points_elem, "point", id=str(i), x=str(x), y=str(y), z=str((1-idx/number_of_frames)))
+                ET.SubElement(contour_points_elem, "point", id=str(i), x=str(x), y=str(y), z=str((1-idx/number_of_frames)))
+            else:
+                print(f"Invalid point at index {i} in contour {idx}: {point}")
+
+    tree = ET.ElementTree(contour_group)
+    tree.write(file_path, encoding="utf-8", xml_declaration=True)
+
+def plot_contours_3d(contours):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    for idx, (contour, frame_idx) in enumerate(contours):
+        xs = contour[:, 0]
+        ys = contour[:, 1]
+        zs = np.full(xs.shape, frame_idx * 0.5)  # z coordinate based on frame index
+        ax.plot(xs, ys, zs)
+
+    plt.show()
+
 def main():
     global outer_mask, inner_mask
 
     # Load the IVUS video file
-    video_path = "/home/bazzi/TEVG/FSG/200813IVUSMovie.avi"
+    video_path = "/home/bazzi/TEVG/FSG/IVUS-processing/200813IVUSMovie.avi"
     # Directory to save extracted frames
-    frames_dir = '/home/bazzi/TEVG/FSG/frames'
-    plots_dir = '/home/bazzi/TEVG/FSG/plots'
-    contours_dir = '/home/bazzi/TEVG/FSG/contours'
+    frames_dir = '/home/bazzi/TEVG/FSG/IVUS-processing/frames'
+    plots_dir = '/home/bazzi/TEVG/FSG/IVUS-processing/plots'
+    contours_dir = '/home/bazzi/TEVG/FSG/IVUS-processing/contours'
+    contours_dir_ctgr = '/home/bazzi/TEVG/FSG/IVUS-processing/contours_ctgr'
     os.makedirs(frames_dir, exist_ok=True)
     os.makedirs(plots_dir, exist_ok=True)
     os.makedirs(contours_dir, exist_ok=True)
+    os.makedirs(contours_dir_ctgr, exist_ok=True)
 
     # Load the video
     cap = cv2.VideoCapture(video_path)
@@ -76,8 +117,8 @@ def main():
     start_frame = int(start_time * fps)
     end_frame = int(end_time * fps)
     total_frames = end_frame - start_frame
-    frame_interval = max(1, total_frames // 5)  # Ensure we get 5 frames
-
+    number_of_frames = 1
+    frame_interval = max(1, total_frames // number_of_frames)
     frame_count = 0
     processed_frame_count = 0
 
@@ -97,6 +138,9 @@ def main():
     print(f'Extracted and processed {processed_frame_count} frames.')
 
     thicknesses = []
+    contours_list = []
+    outer_contours_list = []
+    inner_contours_list = []
     for i in range(processed_frame_count):
         frame_path = os.path.join(frames_dir, f'frame_{i:04d}.png')
         frame = cv2.imread(frame_path)
@@ -107,10 +151,16 @@ def main():
         print(f"Draw inner contour for frame {i}")
         inner_contour = draw_spline_contours(frame.copy())
 
-        # Save contours
+        contours_list.append((outer_contour, i))
+        contours_list.append((inner_contour, i))
+
+        outer_contours_list.append((outer_contour, i))
+        inner_contours_list.append((inner_contour, i))
+        
+        # Save contours in .npy format
         np.save(os.path.join(contours_dir, f'outer_contour_{i:04d}.npy'), outer_contour)
         np.save(os.path.join(contours_dir, f'inner_contour_{i:04d}.npy'), inner_contour)
-
+    
         # Create masks based on the drawn contours
         inner_mask = np.zeros_like(frame[:, :, 0])
         outer_mask = np.zeros_like(frame[:, :, 0])
@@ -153,6 +203,13 @@ def main():
         else:
             print(f"Thickness not calculated for frame {i}")
 
+    # Save outer contours in .ctgr format
+    save_contour_as_ctgr(outer_contours_list, os.path.join(contours_dir_ctgr, f'contours_outer.ctgr'), number_of_frames+1)
+    
+    # Save inner contours in .ctgr format
+    save_contour_as_ctgr(inner_contours_list, os.path.join(contours_dir_ctgr, f'contours_inner.ctgr'), number_of_frames+1)
+    
+    plot_contours_3d(contours_list)
     # Save thickness values
     np.savetxt('/home/bazzi/TEVG/FSG/thicknesses.csv', thicknesses, delimiter=',')
     print(f'Saved thickness values for {len(thicknesses)} frames.')
