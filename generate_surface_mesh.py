@@ -23,12 +23,19 @@ def create_vtk_polydata(points):
     points_vtk = vtk.vtkPoints()
     lines = vtk.vtkCellArray()
     
+    num_points = len(points)
     for i, point in enumerate(points):
         points_vtk.InsertNextPoint(point)
         if i > 0:
             lines.InsertNextCell(2)
             lines.InsertCellPoint(i - 1)
             lines.InsertCellPoint(i)
+    
+    # Close the contour by connecting the last point to the first
+    if num_points > 2:
+        lines.InsertNextCell(2)
+        lines.InsertCellPoint(num_points - 1)
+        lines.InsertCellPoint(0)
 
     polydata.SetPoints(points_vtk)
     polydata.SetLines(lines)
@@ -43,9 +50,9 @@ def create_surface_from_contours(contours):
         polydata2 = create_vtk_polydata(contours[i + 1])
         
         loft_surface = vtk.vtkRuledSurfaceFilter()
-        loft_surface.SetInputData(0, polydata1)
-        loft_surface.SetInputData(1, polydata2)
-        loft_surface.SetResolution(50, 1)
+        loft_surface.SetInputData(polydata1)
+        loft_surface.SetInputData(polydata2)
+        loft_surface.SetResolution(50, 5)
         loft_surface.SetRuledModeToResample()
         loft_surface.Update()
         
@@ -53,7 +60,12 @@ def create_surface_from_contours(contours):
 
     append_filter.Update()
     
-    return append_filter.GetOutput()
+    # Clean the polydata to remove any duplicate points
+    clean_filter = vtk.vtkCleanPolyData()
+    clean_filter.SetInputData(append_filter.GetOutput())
+    clean_filter.Update()
+
+    return clean_filter.GetOutput()
 
 def write_stl(polydata, filename):
     if polydata is None or polydata.GetNumberOfPoints() == 0:
